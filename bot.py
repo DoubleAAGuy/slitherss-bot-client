@@ -100,7 +100,7 @@ def solve_challenge(challenge_bytes):
 
 
 class Bot:
-    def __init__(self, ws, name, game_radius=21600):
+    def __init__(self, ws, name, game_radius=21600, fixed_heading=None):
         self.ws = ws
         self.name = name
         self.game_radius = game_radius
@@ -108,21 +108,25 @@ class Bot:
         self.x = game_radius
         self.y = game_radius
         self.wangle = 0.0
+        self.fixed_heading = fixed_heading
 
     def steer(self):
-        dx = self.game_radius - self.x
-        dy = self.game_radius - self.y
-        dist = math.hypot(dx, dy)
-        if dist < 200:
-            return None
-        aim = math.atan2(dy, dx)
+        if self.fixed_heading is not None:
+            aim = self.fixed_heading
+        else:
+            dx = self.game_radius - self.x
+            dy = self.game_radius - self.y
+            dist = math.hypot(dx, dy)
+            if dist < 200:
+                return None
+            aim = math.atan2(dy, dx)
         aim = normalize_angle(aim)
         if abs(self.wangle - aim) > 0.01:
             self.wangle = aim
         return max(0, min(250, int(self.wangle * 125.0 / PI)))
 
 
-async def run_bot(name, host, port, path):
+async def run_bot(name, host, port, path, fixed_heading=None):
     import websockets
 
     headers = {
@@ -135,7 +139,7 @@ async def run_bot(name, host, port, path):
             uri = f"ws://{host}:{port}{path}"
             async with websockets.connect(uri, ping_interval=None, max_size=2**20,
                                           additional_headers=headers, open_timeout=10) as ws:
-                bot = Bot(ws, name)
+                bot = Bot(ws, name, fixed_heading=fixed_heading)
                 print(f"[{name}] Connected, sending handshake...", flush=True)
 
                 await ws.send(bytes([1]))
@@ -169,7 +173,7 @@ async def run_bot(name, host, port, path):
 
                 while True:
                     now = time.monotonic()
-                    if now - last_cord_log > 10:
+                    if now - last_cord_log > 1:
                         print(f"[{name}] x={bot.x} y={bot.y}", flush=True)
                         last_cord_log = now
                     if now - last_ping > 0.25:
@@ -238,7 +242,12 @@ async def main():
     tasks = []
     for i in range(count):
         name = f"Bot_{i + 1}"
-        tasks.append(asyncio.create_task(run_bot(name, host, port, path)))
+        heading = None
+        if i == 0:
+            heading = 0.5
+        elif i == 1:
+            heading = 3.8
+        tasks.append(asyncio.create_task(run_bot(name, host, port, path, fixed_heading=heading)))
         await asyncio.sleep(1.5)
 
     print(f"{count} bot(s) running. Press Ctrl+C to stop.\n")
