@@ -2,7 +2,6 @@
 import asyncio
 import math
 import struct
-import random
 import sys
 import time
 
@@ -26,37 +25,28 @@ class Bot:
         self.snake_id = 0
         self.x = game_radius
         self.y = game_radius
-        self.angle = 0.0
         self.wangle = 0.0
 
     def steer(self):
         dx = self.game_radius - self.x
         dy = self.game_radius - self.y
         dist = math.hypot(dx, dy)
-
         if dist < 200:
-            aim = self.angle
-        else:
-            aim = math.atan2(dy, dx)
-
-        aim = normalize_angle(aim + math.pi / 4 + random.uniform(-0.12, 0.12))
-
+            return None
+        aim = math.atan2(dy, dx)
+        aim = normalize_angle(aim)
         if abs(self.wangle - aim) > 0.01:
             self.wangle = aim
-
-        idx = max(0, min(250, int(self.wangle * 125.0 / PI)))
-        return idx
+        return max(0, min(250, int(self.wangle * 125.0 / PI)))
 
 
 async def run_bot(name, host, port):
     import websockets
-
     uri = f"ws://{host}:{port}"
     try:
         async with websockets.connect(uri, ping_interval=None, max_size=2**20) as ws:
             bot = Bot(ws, name)
             connected = await asyncio.wait_for(ws.recv(), timeout=10)
-
             if not isinstance(connected, bytes) or len(connected) < 3:
                 return
             if connected[2] == ord('a') and len(connected) >= 6:
@@ -67,38 +57,28 @@ async def run_bot(name, host, port):
 
             found_id = False
             last_ping = time.monotonic()
-            last_boost = time.monotonic()
-            boosting = False
 
             while True:
                 now = time.monotonic()
-
                 if now - last_ping > 0.25:
                     await ws.send(bytes([251]))
                     last_ping = now
 
-                if now - last_boost > random.uniform(2, 6):
-                    boosting = not boosting
-                    await ws.send(bytes([253 if boosting else 254]))
-                    last_boost = now
-
                 angle_byte = bot.steer()
-                await ws.send(bytes([angle_byte]))
+                if angle_byte is not None:
+                    await ws.send(bytes([angle_byte]))
 
                 for _ in range(5):
                     try:
                         d = await asyncio.wait_for(ws.recv(), timeout=0.02)
                         if not isinstance(d, bytes) or len(d) < 3:
                             continue
-
                         ptype = d[2]
-
                         if ptype == ord('s') and len(d) >= 5:
                             sid, _ = read_uint16(d, 3)
                             if not found_id:
                                 bot.snake_id = sid
                                 found_id = True
-
                         if found_id and ptype == ord('g') and len(d) >= 9:
                             sid, _ = read_uint16(d, 3)
                             if sid == bot.snake_id:
@@ -107,7 +87,6 @@ async def run_bot(name, host, port):
                                 if x > 0 or y > 0:
                                     bot.x = x
                                     bot.y = y
-
                     except asyncio.TimeoutError:
                         break
 
@@ -137,11 +116,11 @@ async def main():
     except ValueError:
         count = 1
 
-    print(f"\nStarting {count} bot(s) -> {host}:{port}\n")
+    print(f"\nSpawning {count} bot(s) -> {host}:{port}\n")
 
     tasks = []
     for i in range(count):
-        name = f"Bot_{i + 1}_{random.randint(100, 999)}"
+        name = f"Bot_{i + 1}"
         tasks.append(asyncio.create_task(run_bot(name, host, port)))
         await asyncio.sleep(0.15)
 
