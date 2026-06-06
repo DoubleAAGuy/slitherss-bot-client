@@ -45,7 +45,9 @@ async def run_bot(name, host, port, path="/"):
 
     async def try_connect(scheme):
         uri = f"{scheme}://{host}:{port}{path}"
-        async with websockets.connect(uri, ping_interval=None, max_size=2**20) as ws:
+        headers = {"Origin": "http://slither.io"}
+        async with websockets.connect(uri, ping_interval=None, max_size=2**20,
+                                      additional_headers=headers) as ws:
             bot = Bot(ws, name)
             connected = await asyncio.wait_for(ws.recv(), timeout=10)
             if not isinstance(connected, bytes) or len(connected) < 3:
@@ -114,7 +116,7 @@ async def main():
         print("Invalid port, using 8080")
         port = 8080
 
-    path = input("Path (default /): ").strip() or "/"
+    path = input("Path (default /slither): ").strip() or "/slither"
     if not path.startswith("/"):
         path = "/" + path
 
