@@ -137,7 +137,8 @@ async def run_bot(name, host, port, path, fixed_heading=None):
     while True:
         try:
             uri = f"ws://{host}:{port}{path}"
-            async with websockets.connect(uri, ping_interval=None, max_size=2**20,
+            async with websockets.connect(uri, ping_interval=5, ping_timeout=3,
+                                          max_size=2**20,
                                           additional_headers=headers, open_timeout=10) as ws:
                 bot = Bot(ws, name, fixed_heading=fixed_heading)
                 print(f"[{name}] Connected, sending handshake...", flush=True)
@@ -162,14 +163,50 @@ async def run_bot(name, host, port, path, fixed_heading=None):
                 username_pkt = bytes([ord('s'), PROTOCOL_VERSION, cv_h, cv_l]) + name_data
                 await ws.send(username_pkt)
 
-                init = await asyncio.wait_for(ws.recv(), timeout=10)
-                if not isinstance(init, bytes) or len(init) < 4:
+                init_raw = await asyncio.wait_for(ws.recv(), timeout=10)
+                if not isinstance(init_raw, bytes) or len(init_raw) < 4:
                     print(f"[{name}] Bad init packet", flush=True)
                     continue
 
                 found_id = False
                 last_ping = time.monotonic()
                 last_cord_log = time.monotonic()
+                lpo_x = bot.x
+                lpo_y = bot.y
+
+                def parse_raw_message(data):
+                    if len(data) < 1:
+                        return
+                    if data[0] < 32:
+                        m = 0
+                        while m < len(data):
+                            if data[m] < 32:
+                                if m + 2 > len(data):
+                                    break
+                                plen = (data[m] << 8) | data[m+1]
+                                m += 2
+                            else:
+                                plen = data[m] - 32
+                                m += 1
+                            if m + plen > len(data):
+                                break
+                            yield data[m:m+plen]
+                            m += plen
+                    else:
+                        yield data
+
+                bot_msl = 16
+                for sub in parse_raw_message(init_raw):
+                    if sub[0] == ord('a') and len(sub) >= 27:
+                        grd = (sub[1] << 16) | (sub[2] << 8) | sub[3]
+                        proto_ver = sub[23] if len(sub) >= 24 else 30
+                        bot.game_radius = grd
+                        if len(sub) >= 25:
+                            bot_msl = sub[24]
+                        if len(sub) >= 27:
+                            bot.snake_id = (sub[25] << 8) | sub[26]
+                            found_id = True
+                            print(f"[{name}] Snake ID: {bot.snake_id}, grd: {grd}, msl: {bot_msl}", flush=True)
 
                 while True:
                     now = time.monotonic()
@@ -184,27 +221,89 @@ async def run_bot(name, host, port, path, fixed_heading=None):
                     if angle_byte is not None:
                         await ws.send(bytes([angle_byte]))
 
+                    lpo_x = bot.x
+                    lpo_y = bot.y
+
                     for _ in range(5):
                         try:
                             d = await asyncio.wait_for(ws.recv(), timeout=0.02)
-                            if len(d) < 3:
-                                continue
-                            ptype = d[2]
-                            if ptype == ord('s') and len(d) >= 5:
-                                sid, _ = read_uint16_be(d, 3)
-                                if not found_id:
-                                    bot.snake_id = sid
-                                    found_id = True
-                            if found_id and ptype == ord('g') and len(d) >= 9:
-                                sid, _ = read_uint16_be(d, 3)
-                                if sid == bot.snake_id:
-                                    x, _ = read_uint16_be(d, 5)
-                                    y, _ = read_uint16_be(d, 7)
-                                    if x > 0 or y > 0:
-                                        bot.x = x
-                                        bot.y = y
                         except asyncio.TimeoutError:
                             break
+
+                        def process_sub(sub):
+                            nonlocal found_id, lpo_x, lpo_y
+                            if len(sub) < 1:
+                                return
+                            ptype = sub[0]
+                            sl = len(sub)
+
+                            if ptype == ord('s') and sl >= 27:
+                                sid = (sub[1] << 8) | sub[2]
+                                nl = sub[24]
+                                name_off = 25
+                                if name_off + nl <= sl and sub[name_off:name_off+nl].decode('latin-1', errors='replace') == bot.name:
+                                    snx = (sub[18] << 16 | sub[19] << 8 | sub[20]) / 5.0
+                                    sny = (sub[21] << 16 | sub[22] << 8 | sub[23]) / 5.0
+                                    bot.snake_id = sid
+                                    bot.x = int(snx)
+                                    bot.y = int(sny)
+                                    lpo_x = bot.x
+                                    lpo_y = bot.y
+                                    found_id = True
+                                return
+
+                            if not found_id:
+                                return
+
+                            if ptype == ord('g') and sl >= 5:
+                                gsid = (sub[1] << 8) | sub[2]
+                                if gsid == bot.snake_id:
+                                    iang = (sub[3] << 8) | sub[4]
+                                    ang = iang * M_2PI / 65536.0
+                                    lpo_x = bot.x
+                                    lpo_y = bot.y
+                                    bot.x = int(lpo_x + math.cos(ang) * bot_msl)
+                                    bot.y = int(lpo_y + math.sin(ang) * bot_msl)
+                                return
+
+                            if ptype == ord('G') and sl >= 3:
+                                iang = (sub[1] << 8) | sub[2]
+                                ang = iang * M_2PI / 65536.0
+                                lpo_x = bot.x
+                                lpo_y = bot.y
+                                bot.x = int(lpo_x + math.cos(ang) * bot_msl)
+                                bot.y = int(lpo_y + math.sin(ang) * bot_msl)
+                                return
+
+                            if ptype == ord('=') and sl >= 7:
+                                bx = (sub[3] << 8) | sub[4]
+                                by = (sub[5] << 8) | sub[6]
+                                bot.x = bx
+                                bot.y = by
+                                lpo_x = bx
+                                lpo_y = by
+                                return
+
+                        if len(d) < 1:
+                            continue
+
+                        if d[0] < 32:
+                            m = 0
+                            while m < len(d):
+                                if d[m] < 32:
+                                    if m + 2 > len(d):
+                                        break
+                                    plen = (d[m] << 8) | d[m+1]
+                                    m += 2
+                                else:
+                                    plen = d[m] - 32
+                                    m += 1
+                                if m + plen > len(d):
+                                    break
+                                process_sub(d[m:m+plen])
+                                m += plen
+                        else:
+                            process_sub(d)
 
                     await asyncio.sleep(0.04)
 
