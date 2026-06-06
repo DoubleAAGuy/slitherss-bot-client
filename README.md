@@ -6,8 +6,8 @@ Connects to any slither.io-protocol server and spawns configurable bots that ste
 
 ```bash
 # Remove old copy (if any)
-rm -rf slitherss-bot-client          # Linux/macOS
-rmdir /s /q slitherss-bot-client     # Windows
+rm -rf slitherss-bot-client                 # Linux/macOS
+Remove-Item -Recurse -Force slitherss-bot-client  # Windows PowerShell
 
 git clone https://github.com/DoubleAAGuy/slitherss-bot-client
 cd slitherss-bot-client
