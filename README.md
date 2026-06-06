@@ -5,6 +5,10 @@ Connects to any slither.io-protocol server and spawns configurable bots that ste
 ## Quick Setup
 
 ```bash
+# Remove old copy (if any)
+rm -rf slitherss-bot-client          # Linux/macOS
+rmdir /s /q slitherss-bot-client     # Windows
+
 git clone https://github.com/DoubleAAGuy/slitherss-bot-client
 cd slitherss-bot-client
 pip install websockets
