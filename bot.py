@@ -40,10 +40,11 @@ class Bot:
         return max(0, min(250, int(self.wangle * 125.0 / PI)))
 
 
-async def run_bot(name, host, port):
+async def run_bot(name, host, port, path="/"):
     import websockets
-    uri = f"ws://{host}:{port}"
-    try:
+
+    async def try_connect(scheme):
+        uri = f"{scheme}://{host}:{port}{path}"
         async with websockets.connect(uri, ping_interval=None, max_size=2**20) as ws:
             bot = Bot(ws, name)
             connected = await asyncio.wait_for(ws.recv(), timeout=10)
@@ -92,10 +93,13 @@ async def run_bot(name, host, port):
 
                 await asyncio.sleep(0.04)
 
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        print(f"[{name}] {e}", flush=True)
+    try:
+        await try_connect("ws")
+    except Exception:
+        try:
+            await try_connect("wss")
+        except Exception as e:
+            print(f"[{name}] {e}", flush=True)
 
 
 async def main():
@@ -110,18 +114,23 @@ async def main():
         print("Invalid port, using 8080")
         port = 8080
 
+    path = input("Path (default /): ").strip() or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+
     count_str = input("Number of bots: ").strip() or "1"
     try:
         count = max(1, int(count_str))
     except ValueError:
         count = 1
 
-    print(f"\nSpawning {count} bot(s) -> {host}:{port}\n")
+    scheme = "ws"
+    print(f"\nSpawning {count} bot(s) -> {scheme}://{host}:{port}{path}\n")
 
     tasks = []
     for i in range(count):
         name = f"Bot_{i + 1}"
-        tasks.append(asyncio.create_task(run_bot(name, host, port)))
+        tasks.append(asyncio.create_task(run_bot(name, host, port, path)))
         await asyncio.sleep(0.15)
 
     print(f"{count} bot(s) running. Press Ctrl+C to stop.\n")
