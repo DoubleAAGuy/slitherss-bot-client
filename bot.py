@@ -5,17 +5,98 @@ import struct
 import sys
 import time
 
-
 PI = math.pi
 M_2PI = 2.0 * PI
+
+PROTOCOL_VERSION = 30
+CLIENT_VERSION = 291
+PING_BYTE = 251
 
 
 def normalize_angle(ang):
     return ang - M_2PI * math.floor(ang / M_2PI)
 
 
-def read_uint16(data, offset=0):
-    return struct.unpack_from('!H', data, offset)[0], offset + 2
+def read_uint16_be(data, offset=0):
+    return struct.unpack_from('>H', data, offset)[0], offset + 2
+
+
+def encode_name(name):
+    s = name.encode('ascii', errors='replace')[:24]
+    cv = 5
+    cpw = bytes([54, 206, 204, 169, 97, 178, 74, 136, 124, 117, 14,
+                 210, 106, 236, 8, 208, 136, 213, 140, 111])
+    return cpw + bytes([cv, len(s)]) + s + bytes([0, 255])
+
+
+def js_mod(a, b):
+    if a >= 0:
+        return a % b
+    return -(abs(a) % b)
+
+
+def decode_server_version(data):
+    a = ""
+    d = 0
+    e = 23
+    f = 0
+    for g in range(len(data)):
+        b = data[g]
+        if b <= 96:
+            b += 32
+        b = (b - 97 - e) % 26
+        if b < 0:
+            b += 26
+        d = d * 16 + b
+        e += 17
+        if f == 1:
+            a += chr(d)
+            f = 0
+            d = 0
+        else:
+            f += 1
+    return a
+
+
+def extract_seed(js):
+    q1 = js.find('"')
+    if q1 < 0:
+        raise ValueError("Cannot find seed in JS")
+    q2 = js.find('"', q1 + 1)
+    part1 = js[q1 + 1:q2]
+    q3 = js.find('"', q2 + 1)
+    q4 = js.find('"', q3 + 1)
+    part2 = js[q3 + 1:q4]
+    return part1 + part2
+
+
+def qff9x_transform(seed_str):
+    out = [ord(c) for c in seed_str]
+    roll = 0
+    for c in range(len(out)):
+        base = 65
+        a = out[c]
+        if a >= 97:
+            base += 32
+            a -= 32
+        a -= 65
+        if c == 0:
+            roll = 3 + a
+        e = js_mod(a + roll, 26)
+        roll += 4 + a
+        out[c] = e + base
+    return bytes(out)
+
+
+def solve_challenge(challenge_bytes):
+    if len(challenge_bytes) > 27:
+        js = decode_server_version(challenge_bytes[1:])
+        if js.startswith('var a'):
+            seed = extract_seed(js)
+            return qff9x_transform(seed)
+    js = decode_server_version(challenge_bytes)
+    seed = extract_seed(js)
+    return qff9x_transform(seed)
 
 
 class Bot:
@@ -55,22 +136,44 @@ async def run_bot(name, host, port, path):
             async with websockets.connect(uri, ping_interval=None, max_size=2**20,
                                           additional_headers=headers, open_timeout=10) as ws:
                 bot = Bot(ws, name)
-                connected = await asyncio.wait_for(ws.recv(), timeout=10)
-                if not isinstance(connected, bytes) or len(connected) < 3:
-                    return
-                if connected[2] == ord('a') and len(connected) >= 6:
-                    gr = struct.unpack('!I', b'\x00' + connected[3:6])[0]
-                    bot.game_radius = gr
+                print(f"[{name}] Connected, sending handshake...", flush=True)
 
-                await ws.send(bytes([ord('s'), 8, len(name)]) + name.encode())
+                await ws.send(bytes([1]))
+                await ws.send(bytes([99, 0]))
+
+                challenge = None
+                try:
+                    challenge = await asyncio.wait_for(ws.recv(), timeout=3)
+                    print(f"[{name}] Got challenge ({len(challenge)}B)", flush=True)
+                except asyncio.TimeoutError:
+                    print(f"[{name}] No challenge received, proceeding...", flush=True)
+
+                if challenge:
+                    response = solve_challenge(challenge)
+                    await ws.send(response)
+
+                name_data = encode_name(bot.name)
+                cv_h = CLIENT_VERSION >> 8
+                cv_l = CLIENT_VERSION & 255
+                username_pkt = bytes([ord('s'), PROTOCOL_VERSION, cv_h, cv_l]) + name_data
+                await ws.send(username_pkt)
+
+                init = await asyncio.wait_for(ws.recv(), timeout=10)
+                if not isinstance(init, bytes) or len(init) < 4:
+                    print(f"[{name}] Bad init packet", flush=True)
+                    continue
 
                 found_id = False
                 last_ping = time.monotonic()
+                last_cord_log = time.monotonic()
 
                 while True:
                     now = time.monotonic()
+                    if now - last_cord_log > 10:
+                        print(f"[{name}] x={bot.x} y={bot.y}", flush=True)
+                        last_cord_log = now
                     if now - last_ping > 0.25:
-                        await ws.send(bytes([251]))
+                        await ws.send(bytes([PING_BYTE]))
                         last_ping = now
 
                     angle_byte = bot.steer()
@@ -80,19 +183,19 @@ async def run_bot(name, host, port, path):
                     for _ in range(5):
                         try:
                             d = await asyncio.wait_for(ws.recv(), timeout=0.02)
-                            if not isinstance(d, bytes) or len(d) < 3:
+                            if len(d) < 3:
                                 continue
                             ptype = d[2]
                             if ptype == ord('s') and len(d) >= 5:
-                                sid, _ = read_uint16(d, 3)
+                                sid, _ = read_uint16_be(d, 3)
                                 if not found_id:
                                     bot.snake_id = sid
                                     found_id = True
                             if found_id and ptype == ord('g') and len(d) >= 9:
-                                sid, _ = read_uint16(d, 3)
+                                sid, _ = read_uint16_be(d, 3)
                                 if sid == bot.snake_id:
-                                    x, _ = read_uint16(d, 5)
-                                    y, _ = read_uint16(d, 7)
+                                    x, _ = read_uint16_be(d, 5)
+                                    y, _ = read_uint16_be(d, 7)
                                     if x > 0 or y > 0:
                                         bot.x = x
                                         bot.y = y
