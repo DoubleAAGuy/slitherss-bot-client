@@ -108,7 +108,7 @@ async def main():
     print("slither.io Bot Client")
     print("=" * 35)
 
-    host = input("Server IP (default 127.0.0.1): ").strip() or "127.0.0.1"
+    host = input("Server IP (default 192.211.52.146): ").strip() or "192.211.52.146"
     port_str = input("Server port (default 444): ").strip() or "444"
     try:
         port = int(port_str)
