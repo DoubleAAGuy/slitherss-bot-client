@@ -275,7 +275,7 @@ async def run_bot(name, host, port, path, fixed_heading=None):
                                 bot.y = int(lpo_y + math.sin(ang) * bot_msl)
                                 return
 
-                            if ptype == ord('=') and sl >= 7:
+                            if ptype == ord('=') and sl == 7:
                                 bx = (sub[3] << 8) | sub[4]
                                 by = (sub[5] << 8) | sub[6]
                                 bot.x = bx
