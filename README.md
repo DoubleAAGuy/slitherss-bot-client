@@ -20,7 +20,8 @@ Enter the server IP, port, and number of bots when prompted.
 ### Example
 
 ```
-Server IP (default 127.0.0.1): 192.168.1.100
-Server port (default 8080): 8080
+Server IP (default 127.0.0.1): 192.211.52.146
+Server port (default 444): 444
+Path (default /slither): /slither
 Number of bots: 20
 ```

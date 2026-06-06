@@ -45,7 +45,7 @@ async def run_bot(name, host, port, path="/"):
 
     async def try_connect(scheme):
         uri = f"{scheme}://{host}:{port}{path}"
-        headers = {"Origin": "http://slither.io"}
+        headers = {"Origin": "http://slither.com"}
         async with websockets.connect(uri, ping_interval=None, max_size=2**20,
                                       additional_headers=headers) as ws:
             bot = Bot(ws, name)
@@ -109,7 +109,7 @@ async def main():
     print("=" * 35)
 
     host = input("Server IP (default 127.0.0.1): ").strip() or "127.0.0.1"
-    port_str = input("Server port (default 8080): ").strip() or "8080"
+    port_str = input("Server port (default 444): ").strip() or "444"
     try:
         port = int(port_str)
     except ValueError:
