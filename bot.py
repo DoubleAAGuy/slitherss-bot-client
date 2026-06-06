@@ -5,6 +5,7 @@ import struct
 import sys
 import time
 
+
 PI = math.pi
 M_2PI = 2.0 * PI
 
@@ -40,68 +41,71 @@ class Bot:
         return max(0, min(250, int(self.wangle * 125.0 / PI)))
 
 
-async def run_bot(name, host, port, path="/"):
+async def run_bot(name, host, port, path):
     import websockets
 
-    async def try_connect(scheme):
-        uri = f"{scheme}://{host}:{port}{path}"
-        headers = {"Origin": "http://slither.com"}
-        async with websockets.connect(uri, ping_interval=None, max_size=2**20,
-                                      additional_headers=headers) as ws:
-            bot = Bot(ws, name)
-            connected = await asyncio.wait_for(ws.recv(), timeout=10)
-            if not isinstance(connected, bytes) or len(connected) < 3:
-                return
-            if connected[2] == ord('a') and len(connected) >= 6:
-                gr = struct.unpack('!I', b'\x00' + connected[3:6])[0]
-                bot.game_radius = gr
+    headers = {
+        "Origin": "http://slither.com",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+    }
 
-            await ws.send(bytes([ord('s'), 8, len(name)]) + name.encode())
-
-            found_id = False
-            last_ping = time.monotonic()
-
-            while True:
-                now = time.monotonic()
-                if now - last_ping > 0.25:
-                    await ws.send(bytes([251]))
-                    last_ping = now
-
-                angle_byte = bot.steer()
-                if angle_byte is not None:
-                    await ws.send(bytes([angle_byte]))
-
-                for _ in range(5):
-                    try:
-                        d = await asyncio.wait_for(ws.recv(), timeout=0.02)
-                        if not isinstance(d, bytes) or len(d) < 3:
-                            continue
-                        ptype = d[2]
-                        if ptype == ord('s') and len(d) >= 5:
-                            sid, _ = read_uint16(d, 3)
-                            if not found_id:
-                                bot.snake_id = sid
-                                found_id = True
-                        if found_id and ptype == ord('g') and len(d) >= 9:
-                            sid, _ = read_uint16(d, 3)
-                            if sid == bot.snake_id:
-                                x, _ = read_uint16(d, 5)
-                                y, _ = read_uint16(d, 7)
-                                if x > 0 or y > 0:
-                                    bot.x = x
-                                    bot.y = y
-                    except asyncio.TimeoutError:
-                        break
-
-                await asyncio.sleep(0.04)
-
-    try:
-        await try_connect("ws")
-    except Exception:
+    while True:
         try:
-            await try_connect("wss")
+            uri = f"ws://{host}:{port}{path}"
+            async with websockets.connect(uri, ping_interval=None, max_size=2**20,
+                                          additional_headers=headers, open_timeout=10) as ws:
+                bot = Bot(ws, name)
+                connected = await asyncio.wait_for(ws.recv(), timeout=10)
+                if not isinstance(connected, bytes) or len(connected) < 3:
+                    return
+                if connected[2] == ord('a') and len(connected) >= 6:
+                    gr = struct.unpack('!I', b'\x00' + connected[3:6])[0]
+                    bot.game_radius = gr
+
+                await ws.send(bytes([ord('s'), 8, len(name)]) + name.encode())
+
+                found_id = False
+                last_ping = time.monotonic()
+
+                while True:
+                    now = time.monotonic()
+                    if now - last_ping > 0.25:
+                        await ws.send(bytes([251]))
+                        last_ping = now
+
+                    angle_byte = bot.steer()
+                    if angle_byte is not None:
+                        await ws.send(bytes([angle_byte]))
+
+                    for _ in range(5):
+                        try:
+                            d = await asyncio.wait_for(ws.recv(), timeout=0.02)
+                            if not isinstance(d, bytes) or len(d) < 3:
+                                continue
+                            ptype = d[2]
+                            if ptype == ord('s') and len(d) >= 5:
+                                sid, _ = read_uint16(d, 3)
+                                if not found_id:
+                                    bot.snake_id = sid
+                                    found_id = True
+                            if found_id and ptype == ord('g') and len(d) >= 9:
+                                sid, _ = read_uint16(d, 3)
+                                if sid == bot.snake_id:
+                                    x, _ = read_uint16(d, 5)
+                                    y, _ = read_uint16(d, 7)
+                                    if x > 0 or y > 0:
+                                        bot.x = x
+                                        bot.y = y
+                        except asyncio.TimeoutError:
+                            break
+
+                    await asyncio.sleep(0.04)
+
+        except asyncio.CancelledError:
+            break
         except Exception as e:
-            print(f"[{name}] {e}", flush=True)
+            print(f"[{name}] Disconnected ({e}), reconnecting in 3s...", flush=True)
+            await asyncio.sleep(3)
 
 
 async def main():
@@ -113,8 +117,8 @@ async def main():
     try:
         port = int(port_str)
     except ValueError:
-        print("Invalid port, using 8080")
-        port = 8080
+        print("Invalid port, using 444")
+        port = 444
 
     path = input("Path (default /slither): ").strip() or "/slither"
     if not path.startswith("/"):
@@ -126,14 +130,13 @@ async def main():
     except ValueError:
         count = 1
 
-    scheme = "ws"
-    print(f"\nSpawning {count} bot(s) -> {scheme}://{host}:{port}{path}\n")
+    print(f"\nSpawning {count} bot(s) -> ws://{host}:{port}{path}\n")
 
     tasks = []
     for i in range(count):
         name = f"Bot_{i + 1}"
         tasks.append(asyncio.create_task(run_bot(name, host, port, path)))
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(1.5)
 
     print(f"{count} bot(s) running. Press Ctrl+C to stop.\n")
 
