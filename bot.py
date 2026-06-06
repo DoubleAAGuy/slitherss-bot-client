@@ -59,15 +59,9 @@ def decode_server_version(data):
 
 
 def extract_seed(js):
-    q1 = js.find('"')
-    if q1 < 0:
-        raise ValueError("Cannot find seed in JS")
-    q2 = js.find('"', q1 + 1)
-    part1 = js[q1 + 1:q2]
-    q3 = js.find('"', q2 + 1)
-    q4 = js.find('"', q3 + 1)
-    part2 = js[q3 + 1:q4]
-    return part1 + part2
+    if len(js) < 43 or js[8] != '"' or js[19] != '"':
+        raise ValueError(f"Unexpected JS format: {js[:50]}")
+    return js[9:14] + js[20:42]
 
 
 def qff9x_transform(seed_str):
@@ -83,7 +77,7 @@ def qff9x_transform(seed_str):
         if c == 0:
             roll = 3 + a
         e = js_mod(a + roll, 26)
-        roll += 4 + a
+        roll += 2 + a
         out[c] = e + base
     return bytes(out)
 
