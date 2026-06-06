@@ -5,6 +5,8 @@ Connects to any slither.io-protocol server and spawns configurable bots that ste
 ## Quick Setup
 
 ```bash
+git clone https://github.com/DoubleAAGuy/slitherss-bot-client
+cd slitherss-bot-client
 pip install websockets
 python bot.py
 ```
